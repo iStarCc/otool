@@ -7,6 +7,9 @@ public enum MachOParserError: Error, LocalizedError {
     case unsupportedArchitecture
     case corruptedFile
     case readError(String)
+    case notAnAppBundle
+    case infoPlistNotFound
+    case executableNotFoundInPlist
     
     public var errorDescription: String? {
         switch self {
@@ -20,6 +23,12 @@ public enum MachOParserError: Error, LocalizedError {
             return "文件已损坏"
         case .readError(let message):
             return "读取错误: \(message)"
+        case .notAnAppBundle:
+            return "不是有效的 .app bundle"
+        case .infoPlistNotFound:
+            return "Info.plist 文件未找到"
+        case .executableNotFoundInPlist:
+            return "Info.plist 中未找到 CFBundleExecutable"
         }
     }
 }
@@ -239,5 +248,86 @@ public class MachOParser {
         let minor = (version >> 8) & 0xff
         let patch = version & 0xff
         return "\(major).\(minor).\(patch)"
+    }
+    
+    /// 智能解析：自动识别 .app bundle 或可执行文件
+    /// - Parameter path: .app bundle 路径或可执行文件路径
+    /// - Returns: MachOInfo 对象
+    /// - Throws: MachOParserError
+    public func parseAuto(at path: String) throws -> MachOInfo {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            throw MachOParserError.fileNotFound
+        }
+        
+        // 如果是 .app bundle，解析主可执行文件
+        if isDirectory.boolValue && path.hasSuffix(".app") {
+            return try parseAppBundle(at: path)
+        }
+        
+        // 否则作为普通文件解析
+        return try parse(fileAt: path)
+    }
+    
+    /// 解析 .app bundle 中的主可执行文件
+    /// - Parameter appPath: .app bundle 路径
+    /// - Returns: MachOInfo 对象
+    /// - Throws: MachOParserError
+    public func parseAppBundle(at appPath: String) throws -> MachOInfo {
+        let executablePath = try Self.findMainExecutable(in: appPath)
+        return try parse(fileAt: executablePath)
+    }
+    
+    /// 在 .app bundle 中查找主可执行文件
+    /// - Parameter appPath: .app bundle 路径
+    /// - Returns: 主可执行文件的完整路径
+    /// - Throws: MachOParserError
+    public static func findMainExecutable(in appPath: String) throws -> String {
+        let fileManager = FileManager.default
+        
+        // 检查路径是否存在
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: appPath, isDirectory: &isDirectory) else {
+            throw MachOParserError.fileNotFound
+        }
+        
+        // 检查是否为目录
+        guard isDirectory.boolValue else {
+            throw MachOParserError.notAnAppBundle
+        }
+        
+        // 检查是否以 .app 结尾
+        guard appPath.hasSuffix(".app") else {
+            throw MachOParserError.notAnAppBundle
+        }
+        
+        // 构建 Info.plist 路径
+        let infoPlistPath = (appPath as NSString).appendingPathComponent("Info.plist")
+        
+        // 检查 Info.plist 是否存在
+        guard fileManager.fileExists(atPath: infoPlistPath) else {
+            throw MachOParserError.infoPlistNotFound
+        }
+        
+        // 读取 Info.plist
+        guard let plistData = fileManager.contents(atPath: infoPlistPath),
+              let plist = try? PropertyListSerialization.propertyList(from: plistData, options: [], format: nil) as? [String: Any] else {
+            throw MachOParserError.readError("无法读取 Info.plist")
+        }
+        
+        // 获取 CFBundleExecutable
+        guard let executableName = plist["CFBundleExecutable"] as? String else {
+            throw MachOParserError.executableNotFoundInPlist
+        }
+        
+        // 构建主可执行文件路径
+        let executablePath = (appPath as NSString).appendingPathComponent(executableName)
+        
+        // 检查主可执行文件是否存在
+        guard fileManager.fileExists(atPath: executablePath) else {
+            throw MachOParserError.fileNotFound
+        }
+        
+        return executablePath
     }
 }

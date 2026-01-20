@@ -192,4 +192,208 @@ final class MachOParserTests: XCTestCase {
         XCTAssertTrue(output.contains("libc.dylib"), "输出应包含第二个库名")
         XCTAssertTrue(output.contains("2.3.4"), "输出应包含第二个库的版本号")
     }
+    
+    // MARK: - .app Bundle 测试
+    
+    func testFindMainExecutableInvalidPath() {
+        let invalidPath = "/tmp/nonexistent_\(UUID().uuidString).app"
+        
+        XCTAssertThrowsError(try MachOParser.findMainExecutable(in: invalidPath)) { error in
+            XCTAssertTrue(error is MachOParserError)
+            if let machError = error as? MachOParserError {
+                switch machError {
+                case .fileNotFound:
+                    break // 预期的错误
+                default:
+                    XCTFail("应该是 fileNotFound 错误，实际是: \(machError)")
+                }
+            }
+        }
+    }
+    
+    func testFindMainExecutableNotADirectory() {
+        // 创建一个临时文件（不是目录）
+        let tempPath = NSTemporaryDirectory() + "test_\(UUID().uuidString).app"
+        FileManager.default.createFile(atPath: tempPath, contents: Data())
+        defer {
+            try? FileManager.default.removeItem(atPath: tempPath)
+        }
+        
+        XCTAssertThrowsError(try MachOParser.findMainExecutable(in: tempPath)) { error in
+            XCTAssertTrue(error is MachOParserError)
+            if let machError = error as? MachOParserError {
+                switch machError {
+                case .notAnAppBundle:
+                    break // 预期的错误
+                default:
+                    XCTFail("应该是 notAnAppBundle 错误")
+                }
+            }
+        }
+    }
+    
+    func testFindMainExecutableNotAppExtension() {
+        // 创建一个不以 .app 结尾的目录
+        let tempPath = NSTemporaryDirectory() + "test_\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: tempPath, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(atPath: tempPath)
+        }
+        
+        XCTAssertThrowsError(try MachOParser.findMainExecutable(in: tempPath)) { error in
+            XCTAssertTrue(error is MachOParserError)
+            if let machError = error as? MachOParserError {
+                switch machError {
+                case .notAnAppBundle:
+                    break // 预期的错误
+                default:
+                    XCTFail("应该是 notAnAppBundle 错误")
+                }
+            }
+        }
+    }
+    
+    func testFindMainExecutableMissingInfoPlist() {
+        // 创建一个 .app 目录但没有 Info.plist
+        let tempPath = NSTemporaryDirectory() + "test_\(UUID().uuidString).app"
+        try? FileManager.default.createDirectory(atPath: tempPath, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(atPath: tempPath)
+        }
+        
+        XCTAssertThrowsError(try MachOParser.findMainExecutable(in: tempPath)) { error in
+            XCTAssertTrue(error is MachOParserError)
+            if let machError = error as? MachOParserError {
+                switch machError {
+                case .infoPlistNotFound:
+                    break // 预期的错误
+                default:
+                    XCTFail("应该是 infoPlistNotFound 错误")
+                }
+            }
+        }
+    }
+    
+    func testFindMainExecutableInvalidPlist() {
+        // 创建一个包含无效 Info.plist 的 .app 目录
+        let tempPath = NSTemporaryDirectory() + "test_\(UUID().uuidString).app"
+        try? FileManager.default.createDirectory(atPath: tempPath, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(atPath: tempPath)
+        }
+        
+        // 创建无效的 Info.plist
+        let plistPath = (tempPath as NSString).appendingPathComponent("Info.plist")
+        let invalidData = Data("invalid plist".utf8)
+        FileManager.default.createFile(atPath: plistPath, contents: invalidData)
+        
+        XCTAssertThrowsError(try MachOParser.findMainExecutable(in: tempPath)) { error in
+            XCTAssertTrue(error is MachOParserError)
+        }
+    }
+    
+    func testFindMainExecutableMissingCFBundleExecutable() {
+        // 创建一个 .app 目录，Info.plist 中没有 CFBundleExecutable
+        let tempPath = NSTemporaryDirectory() + "test_\(UUID().uuidString).app"
+        try? FileManager.default.createDirectory(atPath: tempPath, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(atPath: tempPath)
+        }
+        
+        // 创建一个有效但缺少 CFBundleExecutable 的 Info.plist
+        let plistPath = (tempPath as NSString).appendingPathComponent("Info.plist")
+        let plist: [String: Any] = ["CFBundleIdentifier": "com.test.app"]
+        if let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
+            FileManager.default.createFile(atPath: plistPath, contents: data)
+        }
+        
+        XCTAssertThrowsError(try MachOParser.findMainExecutable(in: tempPath)) { error in
+            XCTAssertTrue(error is MachOParserError)
+            if let machError = error as? MachOParserError {
+                switch machError {
+                case .executableNotFoundInPlist:
+                    break // 预期的错误
+                default:
+                    XCTFail("应该是 executableNotFoundInPlist 错误")
+                }
+            }
+        }
+    }
+    
+    func testParseSystemAppIfAvailable() {
+        // 尝试解析系统应用（如果存在）
+        let systemApps = [
+            "/Applications/Calculator.app",
+            "/System/Applications/Calculator.app",
+            "/Applications/TextEdit.app",
+            "/System/Applications/TextEdit.app"
+        ]
+        
+        var foundApp = false
+        
+        for appPath in systemApps {
+            guard FileManager.default.fileExists(atPath: appPath) else {
+                continue
+            }
+            
+            do {
+                // 测试查找主可执行文件
+                let executablePath = try MachOParser.findMainExecutable(in: appPath)
+                XCTAssertFalse(executablePath.isEmpty, "可执行文件路径不应为空")
+                XCTAssertTrue(FileManager.default.fileExists(atPath: executablePath), "可执行文件应该存在")
+                
+                // 测试解析 bundle
+                let info = try parser.parseAppBundle(at: appPath)
+                XCTAssertFalse(info.architecture.isEmpty, "架构信息不应为空")
+                XCTAssertGreaterThan(info.dynamicLibraries.count, 0, "应该至少有一个动态库")
+                
+                print("\n成功解析应用: \(appPath)")
+                print("主可执行文件: \(executablePath)")
+                print("架构: \(info.architecture)")
+                print("动态库数量: \(info.dynamicLibraries.count)")
+                
+                foundApp = true
+                break
+            } catch {
+                print("解析 \(appPath) 失败: \(error)")
+            }
+        }
+        
+        if !foundApp {
+            print("警告: 未找到可用的系统应用进行测试")
+        }
+    }
+    
+    func testOTooliOSPublicAPI() {
+        // 测试公共 API
+        let systemApps = [
+            "/Applications/Calculator.app",
+            "/System/Applications/Calculator.app"
+        ]
+        
+        for appPath in systemApps {
+            guard FileManager.default.fileExists(atPath: appPath) else {
+                continue
+            }
+            
+            do {
+                // 测试 parseAppBundle
+                let info1 = try OTooliOS.parseAppBundle(appPath)
+                XCTAssertFalse(info1.architecture.isEmpty)
+                
+                // 测试 getMainExecutablePath
+                let execPath = try OTooliOS.getMainExecutablePath(from: appPath)
+                XCTAssertFalse(execPath.isEmpty)
+                
+                // 测试 parseFile
+                let info2 = try OTooliOS.parseFile(execPath)
+                XCTAssertEqual(info1.architecture, info2.architecture, "两种方式解析的结果应该一致")
+                
+                print("\n公共 API 测试成功: \(appPath)")
+                break
+            } catch {
+                print("公共 API 测试失败: \(error)")
+            }
+        }
+    }
 }

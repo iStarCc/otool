@@ -24,4 +24,30 @@ public struct OTooliOS {
         let parser = MachOParser()
         return try parser.parse(fileAt: path)
     }
+    
+    /// 智能解析：自动识别 .app bundle 或可执行文件
+    /// - Parameter path: .app bundle 路径或可执行文件路径
+    /// - Returns: MachOInfo 对象
+    /// - Throws: MachOParserError
+    public static func parse(_ path: String) throws -> MachOInfo {
+        let parser = MachOParser()
+        return try parser.parseAuto(at: path)
+    }
+    
+    /// 解析 .app bundle 中的主可执行文件
+    /// - Parameter appPath: .app bundle 路径
+    /// - Returns: MachOInfo 对象
+    /// - Throws: MachOParserError
+    public static func parseAppBundle(_ appPath: String) throws -> MachOInfo {
+        let parser = MachOParser()
+        return try parser.parseAppBundle(at: appPath)
+    }
+    
+    /// 获取 .app bundle 的主可执行文件路径
+    /// - Parameter appPath: .app bundle 路径
+    /// - Returns: 主可执行文件的完整路径
+    /// - Throws: MachOParserError
+    public static func getMainExecutablePath(from appPath: String) throws -> String {
+        return try MachOParser.findMainExecutable(in: appPath)
+    }
 }

@@ -15,8 +15,12 @@ func printUsage() {
       
     示例:
       otool-cli /path/to/binary
-      otool-cli -v /path/to/app
+      otool-cli -v /path/to/MyApp.app
       otool-cli -L /usr/lib/libSystem.dylib
+      
+    注意:
+      - 支持直接解析 .app bundle，会自动查找并解析主可执行文件
+      - 支持 Mach-O 二进制文件和 Fat Binary
     """)
 }
 
@@ -55,14 +59,20 @@ func main() {
         exit(1)
     }
     
-    // 解析文件
-    let parser = MachOParser()
-    
+    // 解析文件（自动识别 .app bundle 或可执行文件）
     do {
         print("正在解析: \(path)")
+        
+        // 如果是 .app bundle，显示主可执行文件信息
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+           isDirectory.boolValue && path.hasSuffix(".app") {
+            let executablePath = try MachOParser.findMainExecutable(in: path)
+            print("主可执行文件: \(executablePath)")
+        }
         print()
         
-        let info = try parser.parse(fileAt: path)
+        let info = try OTooliOS.parse(path)
         
         if verbose {
             // 详细模式

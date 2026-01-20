@@ -8,36 +8,47 @@
 - 🔗 查看动态库依赖（类似 `otool -L`）
 - 📱 支持 iOS 和 macOS
 - 🛠️ 提供命令行工具和库
+- 🎯 支持解析 .app bundle 中的主可执行文件
+- 🔄 支持 Fat Binary（多架构）
 
-## 使用方法
+## 快速开始
 
 ### 作为库使用
 
 ```swift
 import OTooliOS
 
-let parser = MachOParser()
-do {
-    let info = try parser.parse(fileAt: "/path/to/binary")
-    print("架构: \(info.architecture)")
-    print("动态库依赖:")
-    for dylib in info.dynamicLibraries {
-        print("  \(dylib.path) (版本: \(dylib.version))")
-    }
-} catch {
-    print("解析失败: \(error)")
+// 智能解析（自动识别类型）
+let info = try OTooliOS.parse("/Applications/Calculator.app")
+
+print("架构: \(info.architecture)")
+print("动态库数量: \(info.dynamicLibraries.count)")
+```
+
+### iOS 应用中使用
+
+```swift
+// 分析当前应用
+if let path = Bundle.main.executablePath {
+    let info = try OTooliOS.parse(path)
+    print("依赖 \(info.dynamicLibraries.count) 个动态库")
 }
 ```
 
 ### 命令行工具
 
 ```bash
-swift run otool-cli /path/to/binary
+# 解析文件（自动识别 .app bundle 或可执行文件）
+swift run otool-cli /Applications/Calculator.app
+swift run otool-cli /usr/bin/ls
+
+# 详细信息
+swift run otool-cli -v /path/to/MyApp.app
 ```
 
 ## 项目结构
 
-```
+```text
 OTooliOS/
 ├── Sources/
 │   ├── OTooliOS/          # 核心库
@@ -54,6 +65,7 @@ OTooliOS/
 ## 技术实现
 
 本项目实现了 Mach-O 文件格式的解析，包括：
+
 - Mach-O Header 解析
 - Load Commands 读取
 - 动态库路径提取
@@ -64,6 +76,11 @@ OTooliOS/
 - iOS 15.0+
 - macOS 12.0+
 - Swift 5.9+
+
+## 文档
+
+- 📘 [使用指南 (USAGE.md)](USAGE.md) - 完整的使用文档，包含基础用法、iOS 集成和高级示例
+- 📝 [更新日志 (CHANGELOG.md)](CHANGELOG.md) - 版本更新记录
 
 ## License
 
