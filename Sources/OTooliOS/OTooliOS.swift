@@ -25,8 +25,8 @@ public struct OTooliOS {
         return try parser.parse(fileAt: path)
     }
     
-    /// 智能解析：自动识别 .app bundle 或可执行文件
-    /// - Parameter path: .app bundle 路径或可执行文件路径
+    /// 智能解析：自动识别 .app bundle、.framework 或可执行文件
+    /// - Parameter path: .app bundle 路径、.framework 路径或可执行文件路径
     /// - Returns: MachOInfo 对象
     /// - Throws: MachOParserError
     public static func parse(_ path: String) throws -> MachOInfo {
@@ -49,5 +49,22 @@ public struct OTooliOS {
     /// - Throws: MachOParserError
     public static func getMainExecutablePath(from appPath: String) throws -> String {
         return try MachOParser.findMainExecutable(in: appPath)
+    }
+    
+    /// 解析 .framework 中的主二进制文件
+    /// - Parameter frameworkPath: .framework 路径
+    /// - Returns: MachOInfo 对象
+    /// - Throws: MachOParserError
+    public static func parseFramework(_ frameworkPath: String) throws -> MachOInfo {
+        let parser = MachOParser()
+        return try parser.parseFramework(at: frameworkPath)
+    }
+    
+    /// 获取 .framework 的主二进制文件路径
+    /// - Parameter frameworkPath: .framework 路径
+    /// - Returns: 主二进制文件的完整路径
+    /// - Throws: MachOParserError
+    public static func getFrameworkBinaryPath(from frameworkPath: String) throws -> String {
+        return try MachOParser.findFrameworkBinary(in: frameworkPath)
     }
 }

@@ -10,6 +10,8 @@ public enum MachOParserError: Error, LocalizedError {
     case notAnAppBundle
     case infoPlistNotFound
     case executableNotFoundInPlist
+    case notAFramework
+    case frameworkBinaryNotFound
     
     public var errorDescription: String? {
         switch self {
@@ -29,6 +31,10 @@ public enum MachOParserError: Error, LocalizedError {
             return "Info.plist 文件未找到"
         case .executableNotFoundInPlist:
             return "Info.plist 中未找到 CFBundleExecutable"
+        case .notAFramework:
+            return "不是有效的 .framework bundle"
+        case .frameworkBinaryNotFound:
+            return "Framework 二进制文件未找到"
         }
     }
 }
@@ -250,8 +256,8 @@ public class MachOParser {
         return "\(major).\(minor).\(patch)"
     }
     
-    /// 智能解析：自动识别 .app bundle 或可执行文件
-    /// - Parameter path: .app bundle 路径或可执行文件路径
+    /// 智能解析：自动识别 .app bundle、.framework 或可执行文件
+    /// - Parameter path: .app bundle 路径、.framework 路径或可执行文件路径
     /// - Returns: MachOInfo 对象
     /// - Throws: MachOParserError
     public func parseAuto(at path: String) throws -> MachOInfo {
@@ -265,6 +271,11 @@ public class MachOParser {
             return try parseAppBundle(at: path)
         }
         
+        // 如果是 .framework，解析主二进制文件
+        if isDirectory.boolValue && path.hasSuffix(".framework") {
+            return try parseFramework(at: path)
+        }
+        
         // 否则作为普通文件解析
         return try parse(fileAt: path)
     }
@@ -276,6 +287,15 @@ public class MachOParser {
     public func parseAppBundle(at appPath: String) throws -> MachOInfo {
         let executablePath = try Self.findMainExecutable(in: appPath)
         return try parse(fileAt: executablePath)
+    }
+    
+    /// 解析 .framework 中的主二进制文件
+    /// - Parameter frameworkPath: .framework 路径
+    /// - Returns: MachOInfo 对象
+    /// - Throws: MachOParserError
+    public func parseFramework(at frameworkPath: String) throws -> MachOInfo {
+        let binaryPath = try Self.findFrameworkBinary(in: frameworkPath)
+        return try parse(fileAt: binaryPath)
     }
     
     /// 在 .app bundle 中查找主可执行文件
@@ -329,5 +349,130 @@ public class MachOParser {
         }
         
         return executablePath
+    }
+    
+    /// 在 .framework 中查找主二进制文件
+    /// - Parameter frameworkPath: .framework 路径
+    /// - Returns: 主二进制文件的完整路径
+    /// - Throws: MachOParserError
+    public static func findFrameworkBinary(in frameworkPath: String) throws -> String {
+        let fileManager = FileManager.default
+        
+        // 检查路径是否存在
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: frameworkPath, isDirectory: &isDirectory) else {
+            throw MachOParserError.fileNotFound
+        }
+        
+        // 检查是否为目录
+        guard isDirectory.boolValue else {
+            throw MachOParserError.notAFramework
+        }
+        
+        // 检查是否以 .framework 结尾
+        guard frameworkPath.hasSuffix(".framework") else {
+            throw MachOParserError.notAFramework
+        }
+        
+        // 获取 framework 名称（去掉 .framework 扩展名）
+        let frameworkName = (frameworkPath as NSString).lastPathComponent
+            .replacingOccurrences(of: ".framework", with: "")
+        
+        // 辅助函数：检查文件是否为有效的 Mach-O 二进制文件（非符号链接）
+        func isValidBinary(_ path: String) -> Bool {
+            guard fileManager.fileExists(atPath: path) else {
+                return false
+            }
+            
+            // 检查是否为符号链接
+            do {
+                let attrs = try fileManager.attributesOfItem(atPath: path)
+                if attrs[.type] as? FileAttributeType == .typeSymbolicLink {
+                    // 尝试解析符号链接
+                    let destination = try fileManager.destinationOfSymbolicLink(atPath: path)
+                    let resolvedPath: String
+                    if destination.hasPrefix("/") {
+                        resolvedPath = destination
+                    } else {
+                        resolvedPath = ((path as NSString).deletingLastPathComponent as NSString)
+                            .appendingPathComponent(destination)
+                    }
+                    // 递归检查符号链接指向的文件
+                    return isValidBinary(resolvedPath)
+                }
+            } catch {
+                return false
+            }
+            
+            // 检查文件大小（避免空文件）
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: [.mappedIfSafe]),
+                  data.count >= 4 else {
+                return false
+            }
+            
+            // 检查 Mach-O 魔数
+            let magic: UInt32 = data.withUnsafeBytes { $0.load(as: UInt32.self) }
+            return MachOMagic(rawValue: magic) != nil
+        }
+        
+        // 方法1: 尝试直接在根目录找二进制文件（iOS/tvOS/watchOS framework）
+        let directBinaryPath = (frameworkPath as NSString).appendingPathComponent(frameworkName)
+        if isValidBinary(directBinaryPath) {
+            return directBinaryPath
+        }
+        
+        // 方法2: 尝试在 Versions/Current/ 目录找（macOS framework）
+        let versionedBinaryPath = (frameworkPath as NSString)
+            .appendingPathComponent("Versions/Current/\(frameworkName)")
+        if isValidBinary(versionedBinaryPath) {
+            return versionedBinaryPath
+        }
+        
+        // 方法3: 遍历 Versions/ 目录下的所有版本
+        let versionsPath = (frameworkPath as NSString).appendingPathComponent("Versions")
+        if fileManager.fileExists(atPath: versionsPath) {
+            do {
+                let versions = try fileManager.contentsOfDirectory(atPath: versionsPath)
+                for version in versions where version != "Current" {
+                    let versionBinaryPath = ((versionsPath as NSString)
+                        .appendingPathComponent(version) as NSString)
+                        .appendingPathComponent(frameworkName)
+                    if isValidBinary(versionBinaryPath) {
+                        return versionBinaryPath
+                    }
+                }
+            } catch {
+                // 继续尝试其他方法
+            }
+        }
+        
+        // 方法4: 尝试读取 Info.plist 中的 CFBundleExecutable
+        let infoPlistPaths = [
+            (frameworkPath as NSString).appendingPathComponent("Info.plist"),
+            (frameworkPath as NSString).appendingPathComponent("Resources/Info.plist"),
+            (frameworkPath as NSString).appendingPathComponent("Versions/Current/Resources/Info.plist")
+        ]
+        
+        for infoPlistPath in infoPlistPaths {
+            if fileManager.fileExists(atPath: infoPlistPath),
+               let plistData = fileManager.contents(atPath: infoPlistPath),
+               let plist = try? PropertyListSerialization.propertyList(from: plistData, options: [], format: nil) as? [String: Any],
+               let executableName = plist["CFBundleExecutable"] as? String {
+                
+                // 在多个可能的位置查找可执行文件
+                let possiblePaths = [
+                    (frameworkPath as NSString).appendingPathComponent(executableName),
+                    ((frameworkPath as NSString).appendingPathComponent("Versions/Current") as NSString).appendingPathComponent(executableName)
+                ]
+                
+                for possiblePath in possiblePaths {
+                    if isValidBinary(possiblePath) {
+                        return possiblePath
+                    }
+                }
+            }
+        }
+        
+        throw MachOParserError.frameworkBinaryNotFound
     }
 }

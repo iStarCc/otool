@@ -10,6 +10,7 @@
 - 🛠️ 提供命令行工具和库
 - 🎯 支持解析 .app bundle 中的主可执行文件
 - 🔄 支持 Fat Binary（多架构）
+- 📚 支持解析 .framework 文件夹
 
 ## 快速开始
 
@@ -25,6 +26,15 @@ print("架构: \(info.architecture)")
 print("动态库数量: \(info.dynamicLibraries.count)")
 ```
 
+### 解析 Framework
+
+```swift
+// 解析 .framework 文件夹
+let frameworkPath = "/path/to/MyFramework.framework"
+let info = try OTooliOS.parseFramework(frameworkPath)
+print("架构: \(info.architecture)")
+```
+
 ### iOS 应用中使用
 
 ```swift
@@ -38,8 +48,9 @@ if let path = Bundle.main.executablePath {
 ### 命令行工具
 
 ```bash
-# 解析文件（自动识别 .app bundle 或可执行文件）
+# 解析文件（自动识别 .app、.framework 或可执行文件）
 swift run otool-cli /Applications/Calculator.app
+swift run otool-cli /path/to/MyFramework.framework
 swift run otool-cli /usr/bin/ls
 
 # 详细信息
@@ -80,7 +91,9 @@ OTooliOS/
 ## 文档
 
 - 📘 [使用指南 (USAGE.md)](USAGE.md) - 完整的使用文档，包含基础用法、iOS 集成和高级示例
-- 📝 [更新日志 (CHANGELOG.md)](CHANGELOG.md) - 版本更新记录
+- 📚 [Framework 解析指南 (Framework-Parsing.md)](Framework-Parsing.md) - .framework 文件夹解析详细说明
+- 🚀 [快速开始 (QuickStart-iOS.md)](QuickStart-iOS.md) - iOS 应用快速集成指南
+- 📱 [iOS 集成文档 (iOS-Integration.md)](iOS-Integration.md) - 详细的 iOS 集成说明
 
 ## License
 

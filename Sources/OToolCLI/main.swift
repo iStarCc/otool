@@ -17,9 +17,11 @@ func printUsage() {
       otool-cli /path/to/binary
       otool-cli -v /path/to/MyApp.app
       otool-cli -L /usr/lib/libSystem.dylib
+      otool-cli /System/Library/Frameworks/UIKit.framework
       
     注意:
       - 支持直接解析 .app bundle，会自动查找并解析主可执行文件
+      - 支持直接解析 .framework，会自动查找并解析主二进制文件
       - 支持 Mach-O 二进制文件和 Fat Binary
     """)
 }
@@ -59,16 +61,21 @@ func main() {
         exit(1)
     }
     
-    // 解析文件（自动识别 .app bundle 或可执行文件）
+    // 解析文件（自动识别 .app bundle、.framework 或可执行文件）
     do {
         print("正在解析: \(path)")
         
-        // 如果是 .app bundle，显示主可执行文件信息
+        // 如果是 bundle，显示主可执行文件/二进制文件信息
         var isDirectory: ObjCBool = false
         if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
-           isDirectory.boolValue && path.hasSuffix(".app") {
-            let executablePath = try MachOParser.findMainExecutable(in: path)
-            print("主可执行文件: \(executablePath)")
+           isDirectory.boolValue {
+            if path.hasSuffix(".app") {
+                let executablePath = try MachOParser.findMainExecutable(in: path)
+                print("主可执行文件: \(executablePath)")
+            } else if path.hasSuffix(".framework") {
+                let binaryPath = try MachOParser.findFrameworkBinary(in: path)
+                print("主二进制文件: \(binaryPath)")
+            }
         }
         print()
         
